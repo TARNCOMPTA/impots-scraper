@@ -1,5 +1,5 @@
 {
     "url":  "https://raw.githubusercontent.com/TARNCOMPTA/impots-scraper/main/update/app.zip",
-    "version":  "1.0.3",
-    "notes":  "Theme noir, interface a onglets (Clients / Documents / Parametres), mises a jour automatiques au demarrage (plus de bandeau)"
+    "version":  "1.0.4",
+    "notes":  "Emoticone dans le titre de l\u0027appli"
 }
