@@ -6,7 +6,7 @@ import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import {
   listClients, getClient, createClient, updateClient, deleteClient, getClientBySiret,
-  listClientsByCabinet, importClients, listDocuments, listRuns, getSetting, setSetting,
+  listClientsByCabinet, importClients, listDocuments, listAllDocuments, listRuns, getSetting, setSetting,
   listCabinets, getCabinetFull, createCabinet, updateCabinet, deleteCabinet, cabinetsConfigure,
 } from './src/db.js';
 import { scrapeClient, listerClients, scrapeAll } from './src/scraper-impots.js';
@@ -83,6 +83,9 @@ app.put('/api/clients/:id', (req, res) => {
 app.delete('/api/clients/:id', (req, res) => { deleteClient(Number(req.params.id)); res.json({ ok: true }); });
 
 app.get('/api/clients/:id/documents', (req, res) => res.json(listDocuments(Number(req.params.id))));
+
+// Tous les documents (tous clients), pour l'onglet « Documents ».
+app.get('/api/documents', (req, res) => res.json(listAllDocuments()));
 
 app.get('/api/documents/file', (req, res) => {
   const f = String(req.query.path || '');
@@ -187,4 +190,24 @@ app.get('/api/runs', (req, res) => res.json(listRuns(500)));
 app.get('/api/status', (req, res) => res.json({ enCours: [...enCours], cabinets: cabinetsConfigure() }));
 
 const PORT = Number(process.env.PORT || 3003);
-app.listen(PORT, () => console.log(`\n  Impots pro scraper -> http://localhost:${PORT}\n`));
+
+// Mise a jour AUTOMATIQUE au demarrage : si une version plus recente est publiee, on
+// l'installe sans rien demander (telechargement + staging + redemarrage applique par
+// Demarrer.bat). Le serveur ne demarre pas tant que la maj n'est pas appliquee.
+// Les donnees (data/, .env, downloads/) ne sont jamais touchees (hors de l'archive).
+let majDeclenchee = false;
+try {
+  const etat = await verifierMaj();
+  if (etat.updateAvailable && etat.url) {
+    majDeclenchee = true;
+    console.log(`\n  Mise a jour ${etat.latest} disponible — installation automatique...`);
+    await appliquerMaj((m) => console.log('  ' + m));
+    // appliquerMaj programme process.exit(0) : Demarrer.bat applique la maj puis relance.
+  }
+} catch (e) {
+  console.log('  Verification de mise a jour ignoree (' + e.message + ').');
+}
+
+if (!majDeclenchee) {
+  app.listen(PORT, () => console.log(`\n  Impots pro scraper -> http://localhost:${PORT}\n`));
+}

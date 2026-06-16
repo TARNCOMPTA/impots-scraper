@@ -425,46 +425,80 @@ async function chargerRuns() {
   renderRuns();
 }
 
-// ---- Mise a jour ----------------------------------------------------------
-let majLatest = null;
-async function verifierMaj() {
-  try { const v = await api('/api/version'); $('#pied-version').textContent = 'v' + v.version; } catch { /* ignore */ }
-  let dispo = false;
-  try {
-    const m = await api('/api/update/check');
-    const ignoree = localStorage.getItem('maj_ignoree');
-    // Le bandeau n'apparait QUE s'il y a une version plus recente, non deja repoussee.
-    if (m.updateAvailable && m.latest && m.latest !== ignoree) {
-      majLatest = m.latest;
-      $('#maj-texte').textContent = `Mise à jour disponible : v${m.latest}` + (m.notes ? ` — ${m.notes}` : '');
-      dispo = true;
-    }
-  } catch { /* hors-ligne : pas de bandeau */ }
-  $('#maj-banner').hidden = !dispo;
-}
-$('#maj-plustard').addEventListener('click', () => {
-  if (majLatest) localStorage.setItem('maj_ignoree', majLatest); // ne plus proposer cette version
-  $('#maj-banner').hidden = true;
-});
-$('#maj-install').addEventListener('click', async () => {
-  const btn = $('#maj-install');
-  btn.disabled = true; btn.textContent = 'Installation…';
-  try {
-    await api('/api/update/apply', { method: 'POST' });
-    $('#maj-texte').textContent = 'Mise à jour en cours, redémarrage de l\'application…';
-    $('#maj-plustard').hidden = true;
-    let essais = 0;
-    const timer = setInterval(async () => {
-      essais++;
-      try { const r = await fetch('/api/version', { cache: 'no-store' }); if (r.ok) { clearInterval(timer); location.reload(); } } catch { /* pas encore */ }
-      if (essais > 60) { clearInterval(timer); toast('Le redémarrage prend du temps — recharge la page.', 'err'); }
-    }, 1500);
-  } catch (err) { toast(err.message, 'err'); btn.disabled = false; btn.textContent = 'Installer'; }
-});
+// ---- Documents (onglet global) --------------------------------------------
+let tousDocs = [];
+let pageDocs = 1;
+let filtreDocs = '';
+const DOCS_PAR_PAGE = 50;
 
-async function rafraichir() { await chargerCabinets(); await Promise.all([chargerClients(), chargerRuns()]); }
+function norm(s) { return String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }
+
+async function chargerDocuments() {
+  try { tousDocs = await api('/api/documents'); } catch { tousDocs = []; }
+  afficherPageDocs();
+}
+function docsAffiches() {
+  if (!filtreDocs) return tousDocs;
+  const q = norm(filtreDocs);
+  return tousDocs.filter((d) => norm(`${d.client_nom || ''} ${d.libelle || ''} ${d.fichier || ''} ${d.recupere_le || ''}`).includes(q));
+}
+function afficherPageDocs() {
+  const liste = docsAffiches();
+  const tbody = $('#table-docs tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  $('#table-docs').hidden = liste.length === 0;
+  const vide = $('#vide-docs-all');
+  if (vide) {
+    vide.hidden = liste.length !== 0;
+    vide.textContent = filtreDocs ? 'Aucun document ne correspond à la recherche.' : 'Aucun document récupéré pour l\'instant.';
+  }
+  const nbPages = Math.max(1, Math.ceil(liste.length / DOCS_PAR_PAGE));
+  if (pageDocs > nbPages) pageDocs = nbPages;
+  if (pageDocs < 1) pageDocs = 1;
+  const debut = (pageDocs - 1) * DOCS_PAR_PAGE;
+  for (const d of liste.slice(debut, debut + DOCS_PAR_PAGE)) {
+    const lib = d.libelle || (d.fichier ? d.fichier.split(/[\\/]/).pop() : '—');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${d.recupere_le ? new Date(d.recupere_le + 'Z').toLocaleString('fr-FR') : '—'}</td>
+      <td>${esc(d.client_nom || '—')}</td>
+      <td>${esc(lib)}</td>
+      <td><a class="btn small primary" href="/api/documents/file?path=${encodeURIComponent(d.fichier)}" target="_blank">Ouvrir</a></td>`;
+    tbody.appendChild(tr);
+  }
+  const pag = $('#pagination-docs');
+  if (pag) {
+    pag.hidden = liste.length <= DOCS_PAR_PAGE;
+    $('#pag-docs-info').textContent = `Page ${pageDocs} / ${nbPages} — ${liste.length} document(s)`;
+    $('#pag-docs-prev').disabled = pageDocs <= 1;
+    $('#pag-docs-next').disabled = pageDocs >= nbPages;
+  }
+}
+function allerPageDocs(delta) { pageDocs += delta; afficherPageDocs(); }
+$('#pag-docs-prev').addEventListener('click', () => allerPageDocs(-1));
+$('#pag-docs-next').addEventListener('click', () => allerPageDocs(1));
+$('#search-docs').addEventListener('input', (e) => { filtreDocs = e.target.value.trim(); pageDocs = 1; afficherPageDocs(); });
+
+// ---- Onglets --------------------------------------------------------------
+function activerOnglet(nom) {
+  document.querySelectorAll('.tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === nom));
+  document.querySelectorAll('.tab-pane').forEach((p) => { p.hidden = p.id !== `tab-${nom}`; });
+}
+document.querySelectorAll('.tab-btn').forEach((b) => b.addEventListener('click', () => activerOnglet(b.dataset.tab)));
+activerOnglet('clients');
+
+// ---- Version (pied de page) -----------------------------------------------
+// La mise a jour est desormais installee AUTOMATIQUEMENT au demarrage du serveur
+// (cote server.js) : plus de bandeau ni de bouton « Installer » dans l'interface.
+async function afficherVersion() {
+  try { const v = await api('/api/version'); $('#pied-version').textContent = 'v' + v.version; } catch { /* ignore */ }
+}
+
+async function rafraichir() { await chargerCabinets(); await Promise.all([chargerClients(), chargerRuns(), chargerDocuments()]); }
 rafraichir();
 chargerReglages();
 suivreEtat();
-verifierMaj();
+afficherVersion();
 setInterval(chargerRuns, 5000);
+setInterval(chargerDocuments, 8000);

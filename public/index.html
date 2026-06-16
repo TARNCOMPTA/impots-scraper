@@ -6,8 +6,8 @@
   <title>Impôts pro — Avis CFE &amp; taxe foncière</title>
   <script>
     (function () {
-      var t = localStorage.getItem('theme');
-      if (!t) t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      // Theme sombre (noir) par defaut ; l'utilisateur peut repasser en clair.
+      var t = localStorage.getItem('theme') || 'dark';
       document.documentElement.setAttribute('data-theme', t);
     })();
   </script>
@@ -29,126 +29,149 @@
     </div>
   </header>
 
-  <div id="maj-banner" class="maj-banner" hidden>
-    <span id="maj-texte"></span>
-    <span class="maj-actions">
-      <button id="maj-install" class="btn small">Installer</button>
-      <button id="maj-plustard" class="btn small ghost">Plus tard</button>
-    </span>
-  </div>
-
   <main>
-    <section class="panel" id="panel-cabinets">
-      <h2>Comptes espace pro impôts</h2>
-      <p class="aide">
-        Ajoute un ou plusieurs comptes « espace professionnel » impots.gouv.fr. Chaque client est rattaché
-        à un compte. ⚠️ À cause du <strong>captcha</strong>, une fenêtre s'ouvre à chaque session : si tu
-        renseignes l'<strong>e-mail et le mot de passe</strong> ci-dessous, ils sont <strong>préremplis
-        automatiquement</strong> et il ne te reste qu'à <strong>saisir la captcha</strong> puis cliquer sur
-        Connexion. Le robot enchaîne ensuite tous les clients. Le mot de passe est stocké chiffré en local.
-      </p>
-      <table id="table-cabinets">
-        <thead><tr><th>Libellé</th><th>Identifiant</th><th>Clients</th><th>Actions</th></tr></thead>
-        <tbody></tbody>
-      </table>
-      <p class="vide-cab" hidden>Aucun compte cabinet. Ajoutes-en un ci-dessous.</p>
+    <nav class="tabs" role="tablist">
+      <button type="button" class="tab-btn active" data-tab="clients" role="tab">Clients</button>
+      <button type="button" class="tab-btn" data-tab="documents" role="tab">Documents</button>
+      <button type="button" class="tab-btn" data-tab="parametres" role="tab">Paramètres</button>
+    </nav>
 
-      <form id="form-cabinet" class="sous-form">
-        <input type="hidden" name="id" />
-        <div class="form-grid">
-          <label>Libellé (optionnel)
-            <input name="libelle" placeholder="ex : Cabinet principal" />
-          </label>
-          <label>Identifiant (e-mail)
-            <input name="login" placeholder="ex : contact@cabinet.fr" />
-          </label>
-          <label>Mot de passe (pour préremplissage)
-            <input name="password" type="password" placeholder="prérempli — il ne restera que la captcha" />
+    <!-- ===== Onglet Clients ===== -->
+    <div class="tab-pane" id="tab-clients">
+      <section class="panel">
+        <h2>Ajouter un client</h2>
+        <form id="form-client">
+          <input type="hidden" name="id" />
+          <div class="form-grid">
+            <label>Nom du client
+              <input name="nom" required placeholder="Ex : DUPONT Marie / SARL ..." />
+            </label>
+            <label>SIREN (9 chiffres)
+              <input name="siret" required placeholder="Ex : 799359856" inputmode="numeric" />
+            </label>
+            <label>Compte de rattachement
+              <select name="cabinet_id" id="client-cabinet"></select>
+            </label>
+            <label class="full">Dossier d'enregistrement de ce client (optionnel)
+              <span class="champ-dossier">
+                <input name="dossier" placeholder="Vide = dossier global (onglet Paramètres)" />
+                <button type="button" class="btn" data-pick="dossier">Parcourir…</button>
+              </span>
+            </label>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn primary" id="btn-submit">Enregistrer</button>
+            <button type="button" class="btn" id="btn-cancel" hidden>Annuler</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Clients <span id="clients-compte" class="compteur"></span></h2>
+        </div>
+        <div class="toolbar">
+          <input type="search" id="clients-recherche" placeholder="🔍 Rechercher (nom, SIREN, compte)…" />
+          <select id="clients-filtre-cabinet"><option value="">Tous les comptes</option></select>
+          <button type="button" class="btn" id="btn-export-csv">⤓ Exporter (CSV)</button>
+          <button type="button" class="btn primary" id="btn-scrape-selection" disabled>Récupérer la sélection (0)</button>
+          <span class="toolbar-spacer"></span>
+          <label class="page-size">Par page
+            <select id="clients-taille"><option>25</option><option selected>50</option><option>100</option><option value="999999">Tous</option></select>
           </label>
         </div>
-        <div class="form-actions">
-          <button type="submit" class="btn primary" id="cab-submit">Ajouter le cabinet</button>
-          <button type="button" class="btn" id="cab-cancel" hidden>Annuler</button>
+        <table id="table-clients">
+          <thead><tr>
+            <th class="col-check"><input type="checkbox" id="check-all" title="Tout sélectionner (résultat filtré)" /></th>
+            <th class="triable" data-sort="nom">Nom</th>
+            <th class="triable" data-sort="siret">SIREN</th>
+            <th class="triable" data-sort="cabinet">Compte</th>
+            <th class="triable" data-sort="docs">Docs</th>
+            <th class="triable" data-sort="run">Dernier run</th>
+            <th>Actions</th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+        <p class="vide" hidden>Aucun client. Ajoute un compte espace pro (onglet Paramètres) puis « ↻ Synchroniser » (ou ajoute un client par son SIREN).</p>
+        <div class="pagination" id="clients-pagination"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Historique des récupérations</h2>
+        <div class="pagination" id="runs-pagination"></div>
+        <table id="table-runs">
+          <thead><tr><th>Date</th><th>Client</th><th>Statut</th><th>Docs</th><th>Message</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
+    </div>
+
+    <!-- ===== Onglet Documents ===== -->
+    <div class="tab-pane" id="tab-documents" hidden>
+      <section class="panel">
+        <h2>Tous les documents</h2>
+        <p class="aide">Avis CFE / IFER et taxe foncière récupérés pour l'ensemble des clients, du plus récent au plus ancien.</p>
+        <input type="search" id="search-docs" class="quick-search" placeholder="🔍 Rechercher (client, document, date)…" autocomplete="off" />
+        <table id="table-docs">
+          <thead><tr><th>Date de récupération</th><th>Client</th><th>Document</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="pagination" id="pagination-docs" hidden>
+          <button type="button" class="btn small" id="pag-docs-prev">‹ Précédent</button>
+          <span class="pag-info" id="pag-docs-info"></span>
+          <button type="button" class="btn small" id="pag-docs-next">Suivant ›</button>
         </div>
-      </form>
-    </section>
+        <p class="vide" id="vide-docs-all" hidden>Aucun document récupéré pour l'instant.</p>
+      </section>
+    </div>
 
-    <section class="panel">
-      <h2>Ajouter un client</h2>
-      <form id="form-client">
-        <input type="hidden" name="id" />
-        <div class="form-grid">
-          <label>Nom du client
-            <input name="nom" required placeholder="Ex : DUPONT Marie / SARL ..." />
-          </label>
-          <label>SIREN (9 chiffres)
-            <input name="siret" required placeholder="Ex : 799359856" inputmode="numeric" />
-          </label>
-          <label>Compte de rattachement
-            <select name="cabinet_id" id="client-cabinet"></select>
-          </label>
-          <label class="full">Dossier d'enregistrement de ce client (optionnel)
-            <span class="champ-dossier">
-              <input name="dossier" placeholder="Vide = dossier global ci-dessous" />
-              <button type="button" class="btn" data-pick="dossier">Parcourir…</button>
-            </span>
-          </label>
+    <!-- ===== Onglet Paramètres ===== -->
+    <div class="tab-pane" id="tab-parametres" hidden>
+      <section class="panel" id="panel-cabinets">
+        <h2>Comptes espace pro impôts</h2>
+        <p class="aide">
+          Ajoute un ou plusieurs comptes « espace professionnel » impots.gouv.fr. Chaque client est rattaché
+          à un compte. ⚠️ À cause du <strong>captcha</strong>, une fenêtre s'ouvre à chaque session : si tu
+          renseignes l'<strong>e-mail et le mot de passe</strong> ci-dessous, ils sont <strong>préremplis
+          automatiquement</strong> et il ne te reste qu'à <strong>saisir la captcha</strong> puis cliquer sur
+          Connexion. Le robot enchaîne ensuite tous les clients. Le mot de passe est stocké chiffré en local.
+        </p>
+        <table id="table-cabinets">
+          <thead><tr><th>Libellé</th><th>Identifiant</th><th>Clients</th><th>Actions</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <p class="vide-cab" hidden>Aucun compte cabinet. Ajoutes-en un ci-dessous.</p>
+
+        <form id="form-cabinet" class="sous-form">
+          <input type="hidden" name="id" />
+          <div class="form-grid">
+            <label>Libellé (optionnel)
+              <input name="libelle" placeholder="ex : Cabinet principal" />
+            </label>
+            <label>Identifiant (e-mail)
+              <input name="login" placeholder="ex : contact@cabinet.fr" />
+            </label>
+            <label>Mot de passe (pour préremplissage)
+              <input name="password" type="password" placeholder="prérempli — il ne restera que la captcha" />
+            </label>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn primary" id="cab-submit">Ajouter le cabinet</button>
+            <button type="button" class="btn" id="cab-cancel" hidden>Annuler</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel">
+        <h2>Dossier d'enregistrement</h2>
+        <p class="aide">Où ranger les avis (CFE, taxe foncière). Un sous-dossier par client y est créé. Vide = dossier interne.</p>
+        <div class="champ-dossier">
+          <input id="dest-global" placeholder="Ex : D:\Clients\Impots" />
+          <button type="button" class="btn" id="pick-global">Parcourir…</button>
+          <button type="button" class="btn primary" id="save-global">Enregistrer</button>
         </div>
-        <div class="form-actions">
-          <button type="submit" class="btn primary" id="btn-submit">Enregistrer</button>
-          <button type="button" class="btn" id="btn-cancel" hidden>Annuler</button>
-        </div>
-      </form>
-    </section>
-
-    <section class="panel">
-      <h2>Dossier d'enregistrement</h2>
-      <p class="aide">Où ranger les avis (CFE, taxe foncière). Un sous-dossier par client y est créé. Vide = dossier interne.</p>
-      <div class="champ-dossier">
-        <input id="dest-global" placeholder="Ex : D:\Clients\Impots" />
-        <button type="button" class="btn" id="pick-global">Parcourir…</button>
-        <button type="button" class="btn primary" id="save-global">Enregistrer</button>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-head">
-        <h2>Clients <span id="clients-compte" class="compteur"></span></h2>
-      </div>
-      <div class="toolbar">
-        <input type="search" id="clients-recherche" placeholder="🔍 Rechercher (nom, SIREN, compte)…" />
-        <select id="clients-filtre-cabinet"><option value="">Tous les comptes</option></select>
-        <button type="button" class="btn" id="btn-export-csv">⤓ Exporter (CSV)</button>
-        <button type="button" class="btn primary" id="btn-scrape-selection" disabled>Récupérer la sélection (0)</button>
-        <span class="toolbar-spacer"></span>
-        <label class="page-size">Par page
-          <select id="clients-taille"><option>25</option><option selected>50</option><option>100</option><option value="999999">Tous</option></select>
-        </label>
-      </div>
-      <table id="table-clients">
-        <thead><tr>
-          <th class="col-check"><input type="checkbox" id="check-all" title="Tout sélectionner (résultat filtré)" /></th>
-          <th class="triable" data-sort="nom">Nom</th>
-          <th class="triable" data-sort="siret">SIREN</th>
-          <th class="triable" data-sort="cabinet">Compte</th>
-          <th class="triable" data-sort="docs">Docs</th>
-          <th class="triable" data-sort="run">Dernier run</th>
-          <th>Actions</th>
-        </tr></thead>
-        <tbody></tbody>
-      </table>
-      <p class="vide" hidden>Aucun client. Ajoute un compte espace pro puis « ↻ Synchroniser » (ou ajoute un client par son SIREN).</p>
-      <div class="pagination" id="clients-pagination"></div>
-    </section>
-
-    <section class="panel">
-      <h2>Historique des récupérations</h2>
-      <div class="pagination" id="runs-pagination"></div>
-      <table id="table-runs">
-        <thead><tr><th>Date</th><th>Client</th><th>Statut</th><th>Docs</th><th>Message</th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </section>
+      </section>
+    </div>
   </main>
 
   <dialog id="dialog-docs">
