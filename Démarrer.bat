@@ -7,7 +7,7 @@ if not exist "%NODE%" set "NODE=node"
 set "BROWSEROPENED=0"
 
 echo Demarrage du serveur Impots pro... (laissez cette fenetre ouverte)
-echo Adresse : http://localhost:3000
+echo Adresse : http://localhost:3003
 echo.
 
 :boucle
@@ -23,7 +23,7 @@ if exist "restart.flag" del /Q "restart.flag" >nul 2>&1
 rem --- Ouvre le navigateur une seule fois ---
 if "%BROWSEROPENED%"=="0" (
   set "BROWSEROPENED=1"
-  start "" cmd /c "timeout /t 3 >nul & start http://localhost:3000"
+  start "" cmd /c "timeout /t 3 >nul & start http://localhost:3003"
 )
 
 rem --- Lance le serveur (bloquant) ---
