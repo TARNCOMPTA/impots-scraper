@@ -1,5 +1,5 @@
 {
     "url":  "https://raw.githubusercontent.com/TARNCOMPTA/impots-scraper/main/update/app.zip",
-    "version":  "1.0.4",
-    "notes":  "Emoticone dans le titre de l\u0027appli"
+    "version":  "1.0.5",
+    "notes":  "Recuperation en arriere-plan : apres la connexion manuelle (captcha), la fenetre se ferme et les telechargements se font en mode invisible (headless)"
 }
