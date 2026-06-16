@@ -155,4 +155,22 @@ dialog h3 { margin: 0 0 18px; }
 .quick-search:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 .pag-info { color: var(--muted); font-size: .82rem; margin: 0 6px; }
 
+/* Panneau d'avancement (journal en direct) */
+.progress-panel { border-left: 4px solid var(--accent); }
+.progress-resume { display: flex; align-items: center; gap: 14px; margin: 10px 0 6px; }
+.progress-barre { flex: 1; height: 14px; border-radius: 7px; background: var(--border); overflow: hidden; }
+.progress-fill { height: 100%; width: 0%; background: var(--accent); border-radius: 7px; transition: width .6s ease; }
+.progress-compteur { font-family: "Consolas", monospace; font-size: .9rem; color: var(--ink-soft); white-space: nowrap; }
+.progress-courant { margin: 4px 0 8px; color: var(--ink-soft); font-size: .92rem; }
+.progress-bilan { margin: 6px 0; }
+.progress-echecs { margin: 8px 0 0 18px; padding: 0; font-size: .85rem; color: var(--ink-soft); }
+.progress-echecs li { margin-bottom: 3px; }
+.progress-details summary { cursor: pointer; color: var(--muted); font-size: .85rem; margin-top: 6px; }
+.progress-log {
+  margin-top: 8px; padding: 10px 12px; max-height: 220px; overflow-y: auto;
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-family: "Consolas", monospace; font-size: .78rem; line-height: 1.5;
+  color: var(--ink-soft); white-space: pre-wrap; word-break: break-word;
+}
+
 @media (max-width: 620px) { .form-grid { grid-template-columns: 1fr; } dialog { min-width: auto; width: 92vw; } }

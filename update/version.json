@@ -1,5 +1,5 @@
 {
     "url":  "https://raw.githubusercontent.com/TARNCOMPTA/impots-scraper/main/update/app.zip",
-    "version":  "1.0.6",
-    "notes":  "Recup en arriere-plan SANS casser la session : la fenetre se reduit (minimise) apres la connexion au lieu de passer en invisible (le mode headless etait refuse par impots = 0 document)"
+    "version":  "1.0.7",
+    "notes":  "Fenetre journal en direct (panneau d\u0027avancement temps reel : barre de progression, client en cours, journal) comme l\u0027URSSAF"
 }

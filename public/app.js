@@ -425,6 +425,46 @@ async function chargerRuns() {
   renderRuns();
 }
 
+// ---- Suivi d'avancement (journal en direct) -------------------------------
+let progressMasque = false;
+let dernierDemarrage = null;
+let recupEnCours = false;
+async function suivreProgression() {
+  let p;
+  try { p = await api('/api/progress'); } catch { return; }
+  if (p.demarre_le && p.demarre_le !== dernierDemarrage) { dernierDemarrage = p.demarre_le; progressMasque = false; }
+  if (p.actif) recupEnCours = true;
+  else if (recupEnCours) { recupEnCours = false; rafraichir(); } // fin de recup -> rafraichit les tableaux
+  const aMontrer = (p.actif || (p.fini_le && p.resultats.length > 0)) && !progressMasque;
+  $('#panel-progress').hidden = !aMontrer;
+  if (!aMontrer) return;
+  const pct = p.total > 0 ? Math.round((p.fait / p.total) * 100) : 0;
+  $('#progress-fill').style.width = pct + '%';
+  $('#progress-compteur').textContent = `${p.fait} / ${p.total}`;
+  if (p.actif) {
+    $('#progress-titre').textContent = 'Récupération en cours…';
+    $('#progress-courant').textContent = p.courant ? `⏳ Client en cours : ${p.courant}` : '';
+    $('#progress-masquer').hidden = true;
+  } else {
+    $('#progress-titre').textContent = 'Récupération terminée';
+    $('#progress-courant').textContent = '';
+    $('#progress-masquer').hidden = false;
+  }
+  const ok = p.resultats.filter((r) => r.ok);
+  const ko = p.resultats.filter((r) => !r.ok);
+  let bilan = `<span class="badge ok">✔ ${ok.length} succès</span> `;
+  if (ko.length) {
+    bilan += `<span class="badge err">✘ ${ko.length} échec(s)</span>`;
+    bilan += '<ul class="progress-echecs">' + ko.map((r) => `<li><strong>${esc(r.nom)}</strong> — ${esc(r.message)}</li>`).join('') + '</ul>';
+  }
+  $('#progress-bilan').innerHTML = bilan;
+  const logEl = $('#progress-log');
+  const enBas = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40;
+  logEl.textContent = p.logs.join('\n');
+  if (enBas) logEl.scrollTop = logEl.scrollHeight;
+}
+$('#progress-masquer').addEventListener('click', () => { progressMasque = true; $('#panel-progress').hidden = true; });
+
 // ---- Documents (onglet global) --------------------------------------------
 let tousDocs = [];
 let pageDocs = 1;
@@ -500,5 +540,7 @@ rafraichir();
 chargerReglages();
 suivreEtat();
 afficherVersion();
+suivreProgression();
 setInterval(chargerRuns, 5000);
 setInterval(chargerDocuments, 8000);
+setInterval(suivreProgression, 2000);

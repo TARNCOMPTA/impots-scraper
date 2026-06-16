@@ -20,6 +20,24 @@ app.use(express.static(resolve(__dirname, 'public')));
 const enCours = new Set();
 let stopAll = false;
 
+// ---- Suivi d'avancement (en memoire, lu par l'interface via /api/progress) --
+const progression = {
+  actif: false, total: 0, fait: 0, courant: null,
+  demarre_le: null, fini_le: null, resultats: [], logs: [],
+};
+function progLog(ligne) {
+  progression.logs.push(`${new Date().toLocaleTimeString('fr-FR')}  ${ligne}`);
+  if (progression.logs.length > 400) progression.logs.splice(0, progression.logs.length - 400);
+}
+function demarrerSuivi(total) {
+  progression.actif = true; progression.total = total; progression.fait = 0;
+  progression.courant = null; progression.resultats = []; progression.logs = [];
+  progression.demarre_le = new Date().toISOString(); progression.fini_le = null;
+}
+function terminerSuivi() {
+  progression.actif = false; progression.courant = null; progression.fini_le = new Date().toISOString();
+}
+
 // ---- Comptes cabinet ------------------------------------------------------
 app.get('/api/cabinets', (req, res) => res.json(listCabinets()));
 
@@ -126,9 +144,15 @@ async function lancer(clientId, res) {
   if (enCours.has(clientId)) return res?.status(409).json({ error: 'Récupération déjà en cours pour ce client.' });
   enCours.add(clientId);
   res?.json({ started: true, client: c.nom });
+  const suiviLocal = !progression.actif; // ne pas ecraser un suivi de lot deja en cours
+  if (suiviLocal) { demarrerSuivi(1); progression.courant = c.nom; }
   try {
-    await scrapeClient(c, { cabinet: cab, baseFolder: getSetting('destination_folder') });
-  } finally { enCours.delete(clientId); }
+    const r = await scrapeClient(c, { cabinet: cab, baseFolder: getSetting('destination_folder'), onLog: progLog });
+    if (suiviLocal) progression.resultats.push({ nom: c.nom, ok: !!r?.ok, message: r?.ok ? `${r.docs?.length ?? 0} document(s)` : (r?.error || 'erreur'), nb_docs: r?.docs?.length ?? 0 });
+  } finally {
+    enCours.delete(clientId);
+    if (suiviLocal) { progression.fait = 1; terminerSuivi(); }
+  }
 }
 
 app.post('/api/clients/:id/scrape', (req, res) => lancer(Number(req.params.id), res));
@@ -146,7 +170,12 @@ async function lancerLot(clients) {
     if (stopAll) break;
     const cab = getCabinetFull(cabinetId);
     if (!cab) continue;
-    await scrapeAll(sousClients, { cabinet: cab, baseFolder, shouldStop: () => stopAll });
+    await scrapeAll(sousClients, {
+      cabinet: cab, baseFolder, shouldStop: () => stopAll,
+      onLog: progLog,
+      onClient: (nom) => { progression.courant = nom; },
+      onResult: (r) => { progression.resultats.push(r); progression.fait++; },
+    });
   }
 }
 
@@ -158,8 +187,9 @@ app.post('/api/scrape-all', async (req, res) => {
   const total = clients.filter((c) => c.cabinet_id).length;
   enCours.add('all');
   stopAll = false;
+  demarrerSuivi(total);
   res.json({ started: true, total });
-  try { await lancerLot(clients); } finally { enCours.delete('all'); }
+  try { await lancerLot(clients); } finally { enCours.delete('all'); terminerSuivi(); }
 });
 
 // Recuperer une SELECTION de clients (par ids).
@@ -171,8 +201,9 @@ app.post('/api/scrape-selection', async (req, res) => {
   const clients = ids.map((id) => getClient(id)).filter(Boolean);
   enCours.add('all');
   stopAll = false;
+  demarrerSuivi(clients.filter((c) => c.cabinet_id).length);
   res.json({ started: true, total: clients.filter((c) => c.cabinet_id).length });
-  try { await lancerLot(clients); } finally { enCours.delete('all'); }
+  try { await lancerLot(clients); } finally { enCours.delete('all'); terminerSuivi(); }
 });
 
 app.post('/api/scrape-all/stop', (req, res) => { stopAll = true; res.json({ ok: true }); });
@@ -188,6 +219,7 @@ app.post('/api/update/apply', async (req, res) => {
 // ---- Historique -----------------------------------------------------------
 app.get('/api/runs', (req, res) => res.json(listRuns(500)));
 app.get('/api/status', (req, res) => res.json({ enCours: [...enCours], cabinets: cabinetsConfigure() }));
+app.get('/api/progress', (req, res) => res.json(progression));
 
 const PORT = Number(process.env.PORT || 3003);
 

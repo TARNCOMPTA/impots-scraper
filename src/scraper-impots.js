@@ -224,8 +224,11 @@ export async function scrapeAll(clients, opts = {}) {
       const client = clients[i];
       const clog = (m) => { const line = `[${client.nom}] ${m}`; console.log(line); opts.onLog?.(line); };
       clog(`(${i + 1}/${clients.length})`);
+      opts.onClient?.(client.nom);
       const r = await recupererClient(page, client, { baseFolder: opts.baseFolder, navTimeout, log: clog });
       resume.traites++;
+      const msg = r.ok ? `${r.docs.length} document(s)` : (r.error || 'erreur');
+      opts.onResult?.({ nom: client.nom, ok: !!r.ok, message: msg, nb_docs: r.docs.length });
       if (r.ok) { if (r.docs.length) { resume.avecDocs++; resume.docs += r.docs.length; } }
       else resume.echecs++;
     }

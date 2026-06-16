@@ -30,6 +30,23 @@
   </header>
 
   <main>
+    <section class="panel progress-panel" id="panel-progress" hidden>
+      <div class="panel-head">
+        <h2 id="progress-titre">Récupération en cours…</h2>
+        <button type="button" class="btn small" id="progress-masquer" hidden>Masquer</button>
+      </div>
+      <div class="progress-resume">
+        <div class="progress-barre"><div class="progress-fill" id="progress-fill"></div></div>
+        <span class="progress-compteur" id="progress-compteur">0 / 0</span>
+      </div>
+      <p class="progress-courant" id="progress-courant"></p>
+      <div class="progress-bilan" id="progress-bilan"></div>
+      <details class="progress-details" id="progress-details" open>
+        <summary>Journal détaillé</summary>
+        <pre class="progress-log" id="progress-log"></pre>
+      </details>
+    </section>
+
     <nav class="tabs" role="tablist">
       <button type="button" class="tab-btn active" data-tab="clients" role="tab">Clients</button>
       <button type="button" class="tab-btn" data-tab="documents" role="tab">Documents</button>
