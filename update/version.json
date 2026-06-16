@@ -1,5 +1,5 @@
 {
     "url":  "https://raw.githubusercontent.com/TARNCOMPTA/impots-scraper/main/update/app.zip",
-    "version":  "1.0.5",
-    "notes":  "Recuperation en arriere-plan : apres la connexion manuelle (captcha), la fenetre se ferme et les telechargements se font en mode invisible (headless)"
+    "version":  "1.0.6",
+    "notes":  "Recup en arriere-plan SANS casser la session : la fenetre se reduit (minimise) apres la connexion au lieu de passer en invisible (le mode headless etait refuse par impots = 0 document)"
 }

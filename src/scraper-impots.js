@@ -170,7 +170,9 @@ async function recupererClient(page, client, { baseFolder, navTimeout, log }) {
   }
 }
 
-// Session VISIBLE : sert a la connexion manuelle (captcha). Reste affichee.
+// Session VISIBLE : connexion manuelle (captcha) PUIS recuperation. La fenetre est
+// reduite (minimisee) des la connexion detectee -> la recup tourne en arriere-plan,
+// hors de vue, mais avec la session intacte (impots refuse une session headless).
 async function ouvrirSession() {
   const navTimeout = Number(process.env.NAV_TIMEOUT ?? 60000);
   const browser = await chromium.launch({ headless: false }); // visible (captcha manuel)
@@ -180,58 +182,25 @@ async function ouvrirSession() {
   return { browser, context, page, navTimeout };
 }
 
-// Session INVISIBLE (headless) : rouverte avec les cookies recuperes apres la connexion
-// manuelle, pour que TOUTE la recuperation se fasse en arriere-plan, sans fenetre.
-async function ouvrirSessionCachee(storageState) {
-  const navTimeout = Number(process.env.NAV_TIMEOUT ?? 60000);
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--disable-blink-features=AutomationControlled'], // limite la detection "robot"
-  });
-  const context = await browser.newContext({ storageState, acceptDownloads: true, locale: 'fr-FR', viewport: { width: 1500, height: 950 } });
-  const page = await context.newPage();
-  page.setDefaultTimeout(navTimeout);
-  return { browser, context, page, navTimeout };
-}
-
-// Phase 1 : ouvre une fenetre VISIBLE, attend la connexion manuelle, puis renvoie l'etat
-// de session (cookies) et ferme la fenetre. Ensuite la recup se fait en invisible.
-async function connecterPuisRecupererSession(cabinet, log) {
-  const { browser, context, page } = await ouvrirSession();
+// Reduit la fenetre Chromium (via CDP) : la recuperation se poursuit en arriere-plan.
+async function minimiserFenetre(context, page, log) {
   try {
-    await attendreConnexionManuelle(page, cabinet, log);
-    const storageState = await context.storageState();
-    log('Connexion reussie — fermeture de la fenetre, recuperation en arriere-plan (invisible).');
-    return storageState;
-  } finally {
-    await browser.close().catch(() => {});
+    const cdp = await context.newCDPSession(page);
+    const { windowId } = await cdp.send('Browser.getWindowForTarget');
+    await cdp.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'minimized' } });
+    log('Connexion OK — fenetre reduite, recuperation en arriere-plan.');
+  } catch (e) {
+    log(`(reduction de la fenetre impossible : ${e.message.split('\n')[0]})`);
   }
 }
 
-// Verifie que la session transferee est bien active dans le navigateur invisible.
-// Si les impots refusent la session headless, on s'arrete avec un message clair.
-async function verifierSessionActive(page, log) {
-  await page.goto(ACCUEIL_URL, { waitUntil: 'domcontentloaded' }).catch(() => {});
-  await page.waitForTimeout(1500);
-  if (!/\/mire\//.test(page.url())) {
-    throw new Error('Session non reconnue en mode invisible (impots.gouv.fr a refuse la session headless).');
-  }
-  log('Session active en arriere-plan (navigateur invisible).');
-}
-
-/** Un client : connexion manuelle (visible) puis recuperation en arriere-plan (invisible). */
+/** Un client : connexion manuelle (visible) puis recuperation, fenetre reduite. */
 export async function scrapeClient(client, opts = {}) {
   const log = (m) => { const line = `[${client.nom}] ${m}`; console.log(line); opts.onLog?.(line); };
-  let session;
+  const { browser, context, page, navTimeout } = await ouvrirSession();
   try {
-    session = await connecterPuisRecupererSession(opts.cabinet, log);
-  } catch (err) {
-    addRunSafe(client.id, { statut: 'echec', message: err.message, nb_docs: 0 });
-    return { ok: false, error: err.message, docs: [] };
-  }
-  const { browser, page, navTimeout } = await ouvrirSessionCachee(session);
-  try {
-    await verifierSessionActive(page, log);
+    await attendreConnexionManuelle(page, opts.cabinet, log);
+    await minimiserFenetre(context, page, log);
     return await recupererClient(page, client, { baseFolder: opts.baseFolder, navTimeout, log });
   } catch (err) {
     addRunSafe(client.id, { statut: 'echec', message: err.message, nb_docs: 0 });
@@ -241,20 +210,14 @@ export async function scrapeClient(client, opts = {}) {
   }
 }
 
-/** Tous les clients fournis : UNE connexion manuelle (visible), puis tout le lot en invisible. */
+/** Tous les clients fournis : UNE connexion manuelle (visible), fenetre reduite, puis tout le lot. */
 export async function scrapeAll(clients, opts = {}) {
   const log = (m) => { const line = `[lot] ${m}`; console.log(line); opts.onLog?.(line); };
   const resume = { total: clients.length, traites: 0, avecDocs: 0, docs: 0, echecs: 0 };
-  let session;
+  const { browser, context, page, navTimeout } = await ouvrirSession();
   try {
-    session = await connecterPuisRecupererSession(opts.cabinet, log);
-  } catch (err) {
-    log(`ERREUR connexion : ${err.message}`);
-    return { ok: false, error: err.message, resume };
-  }
-  const { browser, page, navTimeout } = await ouvrirSessionCachee(session);
-  try {
-    await verifierSessionActive(page, log);
+    await attendreConnexionManuelle(page, opts.cabinet, log);
+    await minimiserFenetre(context, page, log);
     log(`Traitement de ${clients.length} client(s)...`);
     for (let i = 0; i < clients.length; i++) {
       if (opts.shouldStop && opts.shouldStop()) { log('Arret demande.'); break; }
