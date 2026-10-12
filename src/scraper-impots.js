@@ -3,10 +3,14 @@
 // A cause du CAPTCHA, la connexion est MANUELLE : le robot ouvre un navigateur visible,
 // TU te connectes (identifiants + captcha) UNE fois par session, puis le robot enchaine.
 //
-// Parcours (verifie le 12/06/2026) :
-//   1. cfspro.impots.gouv.fr -> connexion manuelle -> mire/accueil.do
-//   2. CONSULTER > Avis CFE -> afficherChoisirDossier (saisie SIREN, 9 cases) -> Valider
-//   3. rechercherDossiers -> selection du dossier + bouton CONSULTER
+// Parcours (verifie le 12/10/2026, portail DSFR + OpenID Connect) :
+//   1. cfspro.impots.gouv.fr -> redirection vers cfspro-idp.impots.gouv.fr (user / password /
+//      captcha) -> connexion manuelle -> retour sur mire/accueil.do
+//   2. mire/afficherSelectionDossier.do?idth=consulter.avis.cfe&siren=N : liste de tuiles
+//      (.fr-tile__title a -> dossierSelect.do?...&idDossier=SIREN), 10 par page (&p=N).
+//   3. Clic sur la tuile -> ADELIE2 (adelie2mapi/xhtml/accueil/accueil.xhtml). C'est CE clic
+//      (avec idth) qui fixe le dossier cote ADELIE2 : sans lui, avis_cfe.xhtml reste sur le
+//      dossier precedent. On controle donc le SIREN affiche avant de telecharger.
 //   4. ADELIE2 : avis_cfe.xhtml (colonne "Telecharger l'avis") + avisTaxeFonciere.xhtml
 //      (icone PDF colonne "Avis principal") -> clic = telechargement du PDF.
 
@@ -20,32 +24,31 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const DOWNLOADS_DIR = resolve(__dirname, '..', 'downloads');
 
 const ACCUEIL_URL = 'https://cfspro.impots.gouv.fr/';
-const CFE_CHOISIR_URL = 'https://cfspro.impots.gouv.fr/mire/afficherChoisirDossier.do?action=parTypeHablitation&idth=consulter.avis.cfe';
 const CFE_AVIS_URL = 'https://cfspro.impots.gouv.fr/adelie2mapi/xhtml/impots/cfe/avis_cfe.xhtml?emetteur=ADELIE_2';
 const TF_AVIS_URL = 'https://cfspro.impots.gouv.fr/adelie2mapi/xhtml/impots/tf/avisTaxeFonciere.xhtml?emetteur=ADELIE_2';
-const TOUS_DOSSIERS_URL = 'https://cfspro.impots.gouv.fr/mire/afficherChoisirDossier.do?action=tousMesDossier&idth=consulter.avis.cfe';
-// Pages suivantes de "tous mes dossiers" (10 dossiers/page) : afficherMesDossiers.do?p=N
-const PAGE_DOSSIERS_URL = (p) => `https://cfspro.impots.gouv.fr/mire/afficherMesDossiers.do?p=${p}&action=tousMesDossier&idth=consulter.avis.cfe`;
+// Selection de dossier (le token de session est fourni par les liens de la page, inutile en entree).
+// siren = filtre de recherche ; p = page de la liste (10 dossiers/page).
+const SELECTION_URL = ({ siren, p } = {}) => 'https://cfspro.impots.gouv.fr/mire/afficherSelectionDossier.do?idth=consulter.avis.cfe'
+  + (siren ? `&siren=${siren}` : '') + (p ? `&p=${p}` : '');
+const TUILE_DOSSIER_SEL = '.fr-tile__title a[href*="idDossier="]';
 
-// Lit les dossiers (nom + SIREN) presents sur la page courante.
+// Lit les dossiers (nom + SIREN) presents sur la page courante (tuiles DSFR).
 function lireDossiersPage(page) {
-  return page.evaluate(() => {
+  return page.evaluate((sel) => {
     const out = [];
-    for (const r of document.querySelectorAll('input[name="idDossier"]')) {
-      const tr = r.closest('tr, li, div');
-      const t = (tr?.innerText || '').replace(/\s+/g, ' ').trim();
-      const siren = (t.match(/SIREN\s*:?\s*(\d[\d ]{8,})/i) || [])[1];
-      const nom = t.replace(/SIREN.*/i, '').trim();
-      if (nom && siren) out.push({ nom: nom.slice(0, 120), siren: siren.replace(/\s/g, '') });
+    for (const a of document.querySelectorAll(sel)) {
+      const siren = ((a.getAttribute('href') || '').match(/[?&]idDossier=([^&]+)/) || [])[1];
+      const nom = (a.innerText || '').replace(/\s+/g, ' ').trim();
+      if (nom && siren) out.push({ nom: nom.slice(0, 120), siren });
     }
     return out;
-  });
+  }, TUILE_DOSSIER_SEL);
 }
 
 function sanitize(name) { return String(name).replace(/[^\w.\- ]+/g, '_').replace(/\s+/g, '_').trim().slice(0, 120); }
 function addRunSafe(clientId, run) { try { addRun(clientId, run); } catch (e) { console.warn(`(historique: ${e.message})`); } }
 
-// Champs de la page de connexion (idp.impots.gouv.fr). Cibles par "name" (les id ont un suffixe variable).
+// Champs de la page de connexion (cfspro-idp.impots.gouv.fr, OpenID Connect). Cibles par "name" (les id ont un suffixe variable).
 const LOGIN_USER_SEL = 'input[name="user"], input[type="email"]';
 const LOGIN_PWD_SEL = 'input[name="password"], input[type="password"]';
 const LOGIN_CAPTCHA_SEL = 'input[name="captcha"], #input-captcha';
@@ -54,8 +57,8 @@ const LOGIN_CAPTCHA_SEL = 'input[name="captcha"], #input-captcha';
 async function attendreConnexionManuelle(page, cabinet, log) {
   log('Ouverture de la page de connexion impots...');
   await page.goto(ACCUEIL_URL, { waitUntil: 'domcontentloaded' }).catch(() => {});
-  // Deja connecte ? sinon on attend l'accueil "mire" (max 5 min)
-  if (/\/mire\//.test(page.url())) { log('Session deja active.'); return; }
+  // Deja connecte ? (sinon redirection vers cfspro-idp.impots.gouv.fr)
+  if (/cfspro\.impots\.gouv\.fr\/mire\//.test(page.url())) { log('Session deja active.'); return; }
 
   // Pre-remplissage des identifiants (la captcha reste manuelle).
   const champUser = page.locator(LOGIN_USER_SEL).first();
@@ -77,8 +80,8 @@ async function attendreConnexionManuelle(page, cabinet, log) {
     log('Connecte-toi dans le navigateur (identifiants + captcha).');
   }
 
-  // Attend la connexion effective (redirection vers l'espace pro), max 5 min.
-  await page.waitForURL(/cfspro\.impots\.gouv\.fr\/mire\/(accueil|afficherChoisirDossier|rechercherDossiers)/, { timeout: 300000 });
+  // Attend la connexion effective (retour OIDC puis redirection vers l'espace pro), max 5 min.
+  await page.waitForURL(/cfspro\.impots\.gouv\.fr\/mire\//, { timeout: 300000 });
   log('Connexion detectee. Traitement en cours...');
   await page.waitForTimeout(1500);
 }
@@ -126,30 +129,30 @@ async function recupererClient(page, client, { baseFolder, navTimeout, log }) {
 
   try {
     if (siren.length < 9) throw new Error('SIREN invalide (9 chiffres requis).');
-    // 1. Choisir le dossier par SIREN
-    await page.goto(CFE_CHOISIR_URL, { waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(1200);
-    for (let i = 0; i < 9; i++) { const box = page.locator(`#siren${i}`); if (await box.count()) await box.fill(siren[i] || ''); }
-    await page.locator('input[name="button.submitValider"], input[type="image"]').first().click().catch(() => {});
-    await page.waitForLoadState('domcontentloaded').catch(() => {});
-    await page.waitForTimeout(2500);
-    // 2. Liste de dossiers -> selection + CONSULTER
-    if (/rechercherDossiers/i.test(page.url())) {
-      const radio = page.locator('input[name="idDossier"], #sel0').first();
-      if (await radio.count()) { if (!(await radio.isChecked().catch(() => false))) await radio.check().catch(() => {}); }
-      await Promise.all([
-        page.waitForLoadState('domcontentloaded').catch(() => {}),
-        page.locator('input[name="button.submitValider"], input[type="image"]').first().click().catch(() => {}),
-      ]);
-      await page.waitForTimeout(3000);
-    }
+    // 1. Choisir le dossier par SIREN : recherche, puis clic sur la tuile (fixe le dossier cote ADELIE2)
+    await page.goto(SELECTION_URL({ siren }), { waitUntil: 'domcontentloaded' });
+    const tuile = page.locator(`${TUILE_DOSSIER_SEL}[href*="idDossier=${siren}"]`).first();
+    await tuile.waitFor({ state: 'attached', timeout: 15000 })
+      .catch(() => { throw new Error(`Dossier ${siren} introuvable dans l'espace professionnel.`); });
+    // La tuile s'ouvre dans un nouvel onglet (target) : on reste dans cet onglet.
+    await tuile.evaluate((a) => a.removeAttribute('target'));
+    await Promise.all([page.waitForURL(/adelie2mapi/, { timeout: navTimeout }), tuile.click()]);
+    await page.waitForTimeout(1000);
+    // 2. Garde-fou : ADELIE2 doit afficher le SIREN demande
+    const verifierDossier = async () => {
+      const txt = (await page.locator('body').innerText().catch(() => '')).replace(/\s+/g, '');
+      if (!txt.includes(siren)) throw new Error(`ADELIE2 n'affiche pas le dossier ${siren} (mauvais dossier selectionne).`);
+    };
+    await verifierDossier();
     // 3. Avis CFE
     await page.goto(CFE_AVIS_URL, { waitUntil: 'domcontentloaded' }).catch(() => {});
     await page.waitForTimeout(3000);
+    await verifierDossier();
     const cfe = await telechargerAvis(page, client, clientDir, 'CFE', '[id$="tableauAvisImposition_data"]', navTimeout, log);
     // 4. Taxe fonciere
     await page.goto(TF_AVIS_URL, { waitUntil: 'domcontentloaded' }).catch(() => {});
     await page.waitForTimeout(3000);
+    await verifierDossier();
     const tf = await telechargerAvis(page, client, clientDir, 'TF', '[id$="tableauAvisTaxeFonciere_data"]', navTimeout, log);
 
     const nouveaux = cfe.docs.length + tf.docs.length;
@@ -248,9 +251,6 @@ export async function listerClients(cabinet, opts = {}) {
   const { browser, page } = await ouvrirSession();
   try {
     await attendreConnexionManuelle(page, cabinet, log);
-    // Page 1
-    await page.goto(TOUS_DOSSIERS_URL, { waitUntil: 'domcontentloaded' }).catch(() => {});
-    await page.waitForTimeout(2000);
     const rows = [];
     const vus = new Set();
     const ajouter = (lot) => {
@@ -258,44 +258,24 @@ export async function listerClients(cabinet, opts = {}) {
       for (const d of lot) { if (d.siren && !vus.has(d.siren)) { vus.add(d.siren); rows.push({ nom: d.nom, siret: d.siren }); nouveaux++; } }
       return nouveaux;
     };
+    // Page 1, puis p=2..N ("N resultat(s) | Page 1 sur N"), 10 dossiers par page.
+    await page.goto(SELECTION_URL(), { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await page.waitForSelector(TUILE_DOSSIER_SEL, { timeout: 15000 }).catch(() => {});
     ajouter(await lireDossiersPage(page));
     log(`Page 1 : ${rows.length} dossier(s).`);
-
-    // Nombre total de pages (le plus grand p=N parmi les liens de pagination)
     const pageMax = await page.evaluate(() => {
-      let max = 1;
-      for (const a of document.querySelectorAll('a[href*="afficherMesDossiers.do"]')) {
-        const m = (a.getAttribute('href') || '').match(/[?&]p=(\d+)/);
-        if (m) max = Math.max(max, parseInt(m[1], 10));
-      }
-      return max;
+      const m = document.body.innerText.replace(/\s+/g, ' ').match(/Page\s+\d+\s+sur\s+(\d+)/i);
+      return m ? parseInt(m[1], 10) : 1;
     }).catch(() => 1);
-
-    // Pages suivantes : on suit directement les URL p=2..N (avec marge si N grandit en avancant)
-    const plafond = 500;
-    let p = 2, sansNouveau = 0;
-    while (p <= plafond) {
-      await page.goto(PAGE_DOSSIERS_URL(p), { waitUntil: 'domcontentloaded' }).catch(() => {});
-      await page.waitForTimeout(1200);
+    const plafond = Math.min(pageMax, 500);
+    for (let p = 2; p <= plafond; p++) {
+      await page.goto(SELECTION_URL({ p }), { waitUntil: 'domcontentloaded' }).catch(() => {});
+      await page.waitForSelector(TUILE_DOSSIER_SEL, { timeout: 15000 }).catch(() => {});
       const lot = await lireDossiersPage(page);
-      if (!lot.length) break; // plus de dossiers : on a depasse la derniere page
-      const n = ajouter(lot);
-      log(`Page ${p} : +${n} (total ${rows.length})`);
-      if (n === 0) { if (++sansNouveau >= 2) break; } else sansNouveau = 0;
-      // si on a atteint le max annonce et qu'aucune page suivante n'apparait, on s'arrete
-      if (p >= pageMax) {
-        const encore = await page.evaluate((cur) => {
-          for (const a of document.querySelectorAll('a[href*="afficherMesDossiers.do"]')) {
-            const m = (a.getAttribute('href') || '').match(/[?&]p=(\d+)/);
-            if (m && parseInt(m[1], 10) > cur) return true;
-          }
-          return false;
-        }, p).catch(() => false);
-        if (!encore) break;
-      }
-      p++;
+      if (!lot.length) break;
+      log(`Page ${p}/${pageMax} : +${ajouter(lot)} (total ${rows.length})`);
     }
-    log(`${rows.length} dossier(s) liste(s) sur ${p >= pageMax ? p : pageMax} page(s).`);
+    log(`${rows.length} dossier(s) liste(s) sur ${pageMax} page(s).`);
     return rows;
   } finally {
     await browser.close().catch(() => {});
